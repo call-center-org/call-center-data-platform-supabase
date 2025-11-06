@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabaseClient.js'
 
 const fetchLeads = async ({ queryKey }) => {
@@ -7,16 +7,14 @@ const fetchLeads = async ({ queryKey }) => {
   let query = supabase
     .from('leads')
     .select('*', { count: 'exact' })
-    .order('latest_call_time', { ascending: false, nullsFirst: false })
+    .order('latest_call_time', { ascending: false, nullsFirst: true })
 
   if (filters.search) {
     query = query.ilike('phone', `%${filters.search}%`)
   }
-
   if (filters.isSuccess !== 'all') {
     query = query.eq('is_success', filters.isSuccess === 'success')
   }
-
   if (filters.hasWechat !== 'all') {
     query = query.eq('has_wechat', filters.hasWechat === 'true')
   }
@@ -33,51 +31,129 @@ const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   timeStyle: 'short',
 })
 
+const initialForm = {
+  phone: '',
+  intention_level: '',
+  detail: '',
+}
+
 export default function Leads() {
   const [filters, setFilters] = useState({
     search: '',
     isSuccess: 'all',
     hasWechat: 'all',
   })
+  const [formData, setFormData] = useState(initialForm)
+  const [toast, setToast] = useState(null)
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
+  const queryClient = useQueryClient()
+
+  const queryResult = useQuery({
     queryKey: ['leads', filters],
     queryFn: fetchLeads,
     keepPreviousData: true,
   })
 
+  const showToast = (type, message) => {
+    setToast({ type, message })
+    setTimeout(() => setToast(null), 2800)
+  }
+
+  const createLeadMutation = useMutation({
+    mutationFn: async (payload) => {
+      const { error } = await supabase.from('leads').insert(payload)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      showToast('success', '线索已创建')
+      setFormData(initialForm)
+      queryClient.invalidateQueries({ queryKey: ['leads'] })
+    },
+    onError: (error) => {
+      showToast('error', `创建失败：${error.message}`)
+    },
+  })
+
+  const toggleSuccessMutation = useMutation({
+    mutationFn: async ({ phone, next }) => {
+      const { error } = await supabase
+        .from('leads')
+        .update({ is_success: next })
+        .eq('phone', phone)
+      if (error) throw error
+    },
+    onSuccess: (_, variables) => {
+      showToast('success', variables.next ? '已标记为成功单' : '已取消成功单')
+      queryClient.invalidateQueries({ queryKey: ['leads'] })
+    },
+    onError: (error) => {
+      showToast('error', `更新失败：${error.message}`)
+    },
+  })
+
+  const toggleWechatMutation = useMutation({
+    mutationFn: async ({ phone, next }) => {
+      const { error } = await supabase
+        .from('leads')
+        .update({ has_wechat: next })
+        .eq('phone', phone)
+      if (error) throw error
+    },
+    onSuccess: (_, variables) => {
+      showToast('success', variables.next ? '已标记为已加微信' : '已取消微信标记')
+      queryClient.invalidateQueries({ queryKey: ['leads'] })
+    },
+    onError: (error) => {
+      showToast('error', `更新失败：${error.message}`)
+    },
+  })
+
+  const deleteLeadMutation = useMutation({
+    mutationFn: async (phone) => {
+      const { error } = await supabase.from('leads').delete().eq('phone', phone)
+      if (error) throw error
+    },
+    onSuccess: (_, phone) => {
+      showToast('success', `已删除线索 ${phone}`)
+      queryClient.invalidateQueries({ queryKey: ['leads'] })
+    },
+    onError: (error) => {
+      showToast('error', `删除失败：${error.message}`)
+    },
+  })
+
   const stats = useMemo(() => {
-    const list = data?.data ?? []
-    const total = data?.count ?? 0
+    const list = queryResult.data?.data ?? []
+    const total = queryResult.data?.count ?? 0
     const success = list.filter((item) => item.is_success).length
     const withWechat = list.filter((item) => item.has_wechat).length
     const contactRate = total ? Math.round((success / total) * 100) : 0
 
     return [
-      {
-        title: '线索总数',
-        value: summaryFormatter.format(total),
-        description: '当前筛选条件下的线索数量',
-      },
-      {
-        title: '成功单',
-        value: summaryFormatter.format(success),
-        description: 'is_success = true',
-      },
-      {
-        title: '已加微信',
-        value: summaryFormatter.format(withWechat),
-        description: 'has_wechat = true',
-      },
-      {
-        title: '成功率',
-        value: `${contactRate}%`,
-        description: '成功单 / 线索总数',
-      },
+      { title: '线索总数', value: summaryFormatter.format(total), description: '当前筛选条件下' },
+      { title: '成功单', value: summaryFormatter.format(success), description: 'is_success = true' },
+      { title: '已加微信', value: summaryFormatter.format(withWechat), description: 'has_wechat = true' },
+      { title: '成功率', value: `${contactRate}%`, description: '成功单 / 线索总数' },
     ]
-  }, [data])
+  }, [queryResult.data])
 
-  const leads = data?.data ?? []
+  const leads = queryResult.data?.data ?? []
+  const isLoading = queryResult.isLoading
+  const isFetching = queryResult.isFetching
+  const error = queryResult.error
+
+  const handleSubmit = (event) => {
+    event.preventDefault()
+    if (!formData.phone) {
+      showToast('error', '请填写电话号码')
+      return
+    }
+    createLeadMutation.mutate({
+      phone: formData.phone,
+      intention_level: formData.intention_level || null,
+      detail: formData.detail || null,
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -86,12 +162,12 @@ export default function Leads() {
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">线索列表</h1>
             <p className="text-sm text-slate-500">
-              所有数据均直接来自 Supabase REST API，无需自建后端。
+              所有操作均直接调用 Supabase REST API，无需自建后台 CRUD。
             </p>
           </div>
           <button
             type="button"
-            onClick={() => refetch()}
+            onClick={() => queryResult.refetch()}
             className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50"
           >
             {isFetching ? '刷新中…' : '手动刷新'}
@@ -101,6 +177,17 @@ export default function Leads() {
         {error && (
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             Supabase 请求失败：{error.message}
+          </div>
+        )}
+        {toast && (
+          <div
+            className={`rounded-md px-4 py-3 text-sm ${
+              toast.type === 'success'
+                ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
+            {toast.message}
           </div>
         )}
       </header>
@@ -113,6 +200,61 @@ export default function Leads() {
             <p className="mt-3 text-xs text-slate-400">{card.description}</p>
           </div>
         ))}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-3">
+          <div>
+            <label className="text-xs font-medium text-slate-500" htmlFor="new-phone">
+              电话号码 *
+            </label>
+            <input
+              id="new-phone"
+              type="tel"
+              required
+              maxLength={20}
+              value={formData.phone}
+              onChange={(event) => setFormData((prev) => ({ ...prev, phone: event.target.value }))}
+              placeholder="例如：13800138006"
+              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-500" htmlFor="new-intention">
+              意向等级（选填）
+            </label>
+            <input
+              id="new-intention"
+              type="text"
+              value={formData.intention_level}
+              onChange={(event) => setFormData((prev) => ({ ...prev, intention_level: event.target.value }))}
+              placeholder="例如：A / B / C"
+              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+          <div className="md:col-span-1 md:flex md:items-end">
+            <button
+              type="submit"
+              disabled={createLeadMutation.isLoading}
+              className="inline-flex w-full items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {createLeadMutation.isLoading ? '创建中…' : '新建线索'}
+            </button>
+          </div>
+          <div className="md:col-span-3">
+            <label className="text-xs font-medium text-slate-500" htmlFor="new-detail">
+              备注（选填）
+            </label>
+            <textarea
+              id="new-detail"
+              rows={2}
+              value={formData.detail}
+              onChange={(event) => setFormData((prev) => ({ ...prev, detail: event.target.value }))}
+              placeholder="可记录首访备注、来源说明等"
+              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+        </form>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -130,7 +272,6 @@ export default function Leads() {
               className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
-
           <div>
             <label className="text-xs font-medium text-slate-500" htmlFor="isSuccess">
               成功单
@@ -146,7 +287,6 @@ export default function Leads() {
               <option value="pending">仅未成功</option>
             </select>
           </div>
-
           <div>
             <label className="text-xs font-medium text-slate-500" htmlFor="hasWechat">
               是否已加微信
@@ -174,8 +314,8 @@ export default function Leads() {
                 <th className="whitespace-nowrap px-4 py-3 text-left">拨打/接通</th>
                 <th className="whitespace-nowrap px-4 py-3 text-left">最新通话</th>
                 <th className="whitespace-nowrap px-4 py-3 text-left">意向等级</th>
-                <th className="whitespace-nowrap px-4 py-3 text-left">成功单</th>
-                <th className="whitespace-nowrap px-4 py-3 text-left">已加微信</th>
+                <th className="whitespace-nowrap px-4 py-3 text-left">标签</th>
+                <th className="whitespace-nowrap px-4 py-3 text-left">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 text-sm text-slate-700">
@@ -208,29 +348,45 @@ export default function Leads() {
                       <td className="whitespace-nowrap px-4 py-3">
                         {lead.intention_level || '—'}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <span
-                          className={[
-                            'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                            lead.is_success
-                              ? 'bg-emerald-50 text-emerald-600'
-                              : 'bg-slate-100 text-slate-500',
-                          ].join(' ')}
-                        >
-                          {lead.is_success ? '成功' : '未成功'}
-                        </span>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
+                        {lead.tags ? JSON.stringify(lead.tags) : '—'}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
-                        <span
-                          className={[
-                            'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                            lead.has_wechat
-                              ? 'bg-indigo-50 text-indigo-600'
-                              : 'bg-slate-100 text-slate-500',
-                          ].join(' ')}
-                        >
-                          {lead.has_wechat ? '已加微信' : '未加微信'}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              toggleSuccessMutation.mutate({
+                                phone: lead.phone,
+                                next: !lead.is_success,
+                              })
+                            }
+                            className="inline-flex items-center rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                          >
+                            {lead.is_success ? '取消成功单' : '标记成功单'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              toggleWechatMutation.mutate({
+                                phone: lead.phone,
+                                next: !lead.has_wechat,
+                              })
+                            }
+                            className="inline-flex items-center rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                          >
+                            {lead.has_wechat ? '取消微信' : '标记已加微信'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              deleteLeadMutation.mutate(lead.phone)
+                            }
+                            className="inline-flex items-center rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            删除
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
