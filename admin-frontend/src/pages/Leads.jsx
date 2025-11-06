@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabaseClient.js'
 
@@ -45,6 +45,7 @@ export default function Leads() {
   })
   const [formData, setFormData] = useState(initialForm)
   const [toast, setToast] = useState(null)
+  const [realtimeEnabled, setRealtimeEnabled] = useState(true)
 
   const queryClient = useQueryClient()
 
@@ -53,6 +54,29 @@ export default function Leads() {
     queryFn: fetchLeads,
     keepPreviousData: true,
   })
+
+  useEffect(() => {
+    if (!realtimeEnabled) return
+
+    const channel = supabase
+      .channel('leads-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'leads',
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['leads'] })
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [queryClient, realtimeEnabled])
 
   const showToast = (type, message) => {
     setToast({ type, message })
@@ -67,7 +91,9 @@ export default function Leads() {
     onSuccess: () => {
       showToast('success', '线索已创建')
       setFormData(initialForm)
-      queryClient.invalidateQueries({ queryKey: ['leads'] })
+      if (!realtimeEnabled) {
+        queryClient.invalidateQueries({ queryKey: ['leads'] })
+      }
     },
     onError: (error) => {
       showToast('error', `创建失败：${error.message}`)
@@ -84,7 +110,9 @@ export default function Leads() {
     },
     onSuccess: (_, variables) => {
       showToast('success', variables.next ? '已标记为成功单' : '已取消成功单')
-      queryClient.invalidateQueries({ queryKey: ['leads'] })
+      if (!realtimeEnabled) {
+        queryClient.invalidateQueries({ queryKey: ['leads'] })
+      }
     },
     onError: (error) => {
       showToast('error', `更新失败：${error.message}`)
@@ -101,7 +129,9 @@ export default function Leads() {
     },
     onSuccess: (_, variables) => {
       showToast('success', variables.next ? '已标记为已加微信' : '已取消微信标记')
-      queryClient.invalidateQueries({ queryKey: ['leads'] })
+      if (!realtimeEnabled) {
+        queryClient.invalidateQueries({ queryKey: ['leads'] })
+      }
     },
     onError: (error) => {
       showToast('error', `更新失败：${error.message}`)
@@ -115,7 +145,9 @@ export default function Leads() {
     },
     onSuccess: (_, phone) => {
       showToast('success', `已删除线索 ${phone}`)
-      queryClient.invalidateQueries({ queryKey: ['leads'] })
+      if (!realtimeEnabled) {
+        queryClient.invalidateQueries({ queryKey: ['leads'] })
+      }
     },
     onError: (error) => {
       showToast('error', `删除失败：${error.message}`)
@@ -162,16 +194,27 @@ export default function Leads() {
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">线索列表</h1>
             <p className="text-sm text-slate-500">
-              所有操作均直接调用 Supabase REST API，无需自建后台 CRUD。
+              REST + Realtime：所有操作无须自建后端，数据自动推送到页面。
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => queryResult.refetch()}
-            className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50"
-          >
-            {isFetching ? '刷新中…' : '手动刷新'}
-          </button>
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-medium text-slate-500">
+              <input
+                type="checkbox"
+                className="mr-2 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                checked={realtimeEnabled}
+                onChange={(event) => setRealtimeEnabled(event.target.checked)}
+              />
+              启用实时刷新
+            </label>
+            <button
+              type="button"
+              onClick={() => queryResult.refetch()}
+              className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50"
+            >
+              {isFetching ? '刷新中…' : '手动刷新'}
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -280,7 +323,7 @@ export default function Leads() {
               id="isSuccess"
               value={filters.isSuccess}
               onChange={(event) => setFilters((prev) => ({ ...prev, isSuccess: event.target.value }))}
-              className="mt-1 inline-flex w-40 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="mt-1 inline-flex w-40 rounded-md border border-slate-200 bg白 px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
               <option value="all">全部</option>
               <option value="success">仅成功单</option>
@@ -379,9 +422,7 @@ export default function Leads() {
                           </button>
                           <button
                             type="button"
-                            onClick={() =>
-                              deleteLeadMutation.mutate(lead.phone)
-                            }
+                            onClick={() => deleteLeadMutation.mutate(lead.phone)}
                             className="inline-flex items-center rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
                           >
                             删除
