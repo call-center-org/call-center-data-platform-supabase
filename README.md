@@ -76,24 +76,28 @@ call-center-data-platform-supabase/
 │
 ├── supabase/                    # Supabase 配置
 │   ├── migrations/              # SQL 迁移文件
-│   │   ├── 20250105_001_create_leads.sql
-│   │   ├── 20250105_002_create_packages.sql
-│   │   └── ...
-│   ├── functions/               # Edge Functions
+│   │   ├── 202501050001_create_leads.sql
+│   │   ├── 202501050002_create_packages.sql
+│   │   ├── 202501050003_create_agents.sql
+│   │   └── 202501050004_create_triggers.sql
+│   ├── functions/               # Edge Functions（预留）
 │   └── seed.sql                # 测试数据
 │
-├── admin-frontend/              # 管理前端
+├── admin-frontend/              # 管理前端（React + Vite）
 │   ├── src/
 │   │   ├── components/         # React 组件
-│   │   ├── pages/              # 页面
-│   │   ├── utils/              # 工具函数
+│   │   │   └── layout/         # 布局（侧边栏、Header 等）
+│   │   ├── pages/              # 页面占位（Dashboard/Leads/...）
+│   │   ├── lib/                # 工具函数
 │   │   │   └── supabaseClient.js
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── index.html
+│   │   ├── App.jsx             # 路由定义
+│   │   └── main.jsx            # React 入口（QueryClientProvider）
+│   ├── .env.example           # 前端环境变量模板
+│   ├── README.md              # 前端项目说明
+│   ├── postcss.config.js
+│   ├── tailwind.config.js
 │   ├── package.json
-│   ├── vite.config.js
-│   └── tailwind.config.js
+│   └── vite.config.js
 │
 └── scripts/                     # 工具脚本
     ├── export-schema.py        # 从现有数据库导出 Schema
@@ -116,14 +120,19 @@ cd call-center-data-platform-supabase
 
 ```bash
 cp .env.example .env
+cp admin-frontend/.env.example admin-frontend/.env
 ```
 
-编辑 `.env` 文件：
+编辑根目录 `.env` 文件（供 CLI、脚本使用）：
 
 ```env
 VITE_SUPABASE_URL=https://urfsdaxibssuvgbukqxa.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_DB_URL=postgresql://postgres:miaozhongtang310@db.urfsdaxibssuvgbukqxa.supabase.co:5432/postgres
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key (仅内部使用，可留空)
 ```
+
+同样的 URL 与 Anon Key 也需要写入 `admin-frontend/.env`。
 
 ### 3. 启动管理前端
 
