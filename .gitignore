@@ -43,3 +43,7 @@ yarn-error.log*
 # OS
 Thumbs.db
 
+
+# Supabase CLI
+supabase/.temp/
+bin/
